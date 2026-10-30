@@ -1,0 +1,107 @@
+--- pugl_x11.c.orig	2026-10-29 13:46:39.321434085 +0300
++++ pugl_x11.c	2026-10-30 11:38:15.324588286 +0300
+@@ -29,6 +29,7 @@
+ #include <X11/Xatom.h>
+ #include <X11/Xlib.h>
+ #include <X11/keysym.h>
++#include <X11/extensions/Xrender.h>  /*  -lXrender  */
+ 
+ #include "pugl_internal.h"
+ 
+@@ -101,6 +102,32 @@
+ 	None
+ };
+ 
++/**
++   Attributes for double-buffered RGBA with multi-sampling
++	 antialiasing (MSAA) and background transparency (Alpha).
++   NOTE that, with _integrated_ GPU, it's impossible to combine
++	 MSAA and Alpha, and GPU selects no Alpha.
++	 Turn off 'optMsaa' to get Alpha working in this case.
++   Uses Datenwolf method from https://stackoverflow.com/questions/4052940
++   Important cite: "You definitely must use XRenderPictFormat..."
++*/
++#define optAlpha 1
++#define optMsaa 0   // 0: Disabled, or 1...4
++int attrListDblMSAlpha[] = {
++	GLX_RENDER_TYPE     , GLX_RGBA_BIT,
++	GLX_DRAWABLE_TYPE   , GLX_WINDOW_BIT,
++	GLX_X_VISUAL_TYPE   , GLX_TRUE_COLOR,
++	GLX_DOUBLEBUFFER    , True,
++	GLX_RED_SIZE        , 4,
++	GLX_GREEN_SIZE      , 4,
++	GLX_BLUE_SIZE       , 4,
++	GLX_ALPHA_SIZE      , (optAlpha) * 4,
++	GLX_DEPTH_SIZE      , 16,
++	GLX_SAMPLE_BUFFERS  , (optMsaa > 0),
++	GLX_SAMPLES         , optMsaa,
++	None
++};
++
+ 	PuglView*
+ puglCreate(PuglNativeWindow parent,
+            const char*      title,
+@@ -136,7 +163,38 @@
+ 	impl->screen  = DefaultScreen(impl->display);
+ 	impl->doubleBuffered = True;
+ 
+-	XVisualInfo* vi = glXChooseVisual(impl->display, impl->screen, attrListDblMS);
++	XVisualInfo* vi = NULL;
++	XRenderPictFormat *pict_format;
++	GLXFBConfig fbconfig = 0, *fbconfigs;
++
++	fbconfig = 0;
++	int numfbconfigs;
++	fbconfigs = glXChooseFBConfig(impl->display, impl->screen, attrListDblMSAlpha, &numfbconfigs);
++
++	for (int i = 0; i < numfbconfigs; i++)
++	{
++		vi = (XVisualInfo*) glXGetVisualFromFBConfig(impl->display, fbconfigs[i]);
++		if (!vi)
++			continue;
++
++		pict_format = XRenderFindVisualFormat(impl->display, vi->visual);
++		if (!pict_format) {
++			XFree(vi);
++			continue;
++		}
++
++		fbconfig = fbconfigs[i];
++		if ((pict_format->direct.alphaMask > 0) == optAlpha)
++			break;
++	}
++
++	if (!fbconfig)
++	{
++		vi = glXChooseVisual(impl->display, impl->screen, attrListDblMS);
++#ifdef VERBOSE_PUGL
++		printf("puGL: background transparency is off or not available\n");
++#endif
++	}
+ 
+ 	if (!vi) {
+ 		vi = glXChooseVisual(impl->display, impl->screen, attrListDbl);
+@@ -181,7 +239,10 @@
+ 		| PointerMotionMask | StructureNotifyMask;
+ 
+ 	impl->win = XCreateWindow(
+-		impl->display, xParent,
++		/* Not work with transparency. FIXME */
++		//impl->display, xParent,
++		/* Work with transparency */
++		impl->display, DefaultRootWindow(impl->display),
+ 		0, 0, view->width, view->height, 0, vi->depth, InputOutput, vi->visual,
+ 		CWBorderPixel | CWColormap | CWEventMask, &attr);
+ 
+@@ -213,6 +274,11 @@
+ 		XSetWMProtocols(impl->display, impl->win, &wmDelete, 1);
+ 	}
+ 
++#define anchor 0    /*  Lock window position            */
++#define noborder 1  /*  Hide window caption and border  */
++	Atom mwh = XInternAtom(impl->display, "_MOTIF_WM_HINTS", 0);
++	XChangeProperty(impl->display, impl->win, mwh, mwh, 32, PropModeReplace, (unsigned char*)(Atom[]){noborder * 2 + anchor, None, None, None, None}, 5);
++
+ 	if (!parent && view->ontop) { /* TODO stay on top  */
+ 		Atom type = XInternAtom(impl->display, "_NET_WM_STATE_ABOVE", False);
+ 		XChangeProperty(impl->display, impl->win,
