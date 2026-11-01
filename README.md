@@ -9,3 +9,9 @@ Tested with Ardour, Jalv, and Carla, with X11 & Xfce. Not tested with Wayland.
 
 Add `-lXrender` to both compiler and linker at `Makefile`.
 
+Q: How do i move non-decorated window?
+-------------------------------------
+When no caption nor border mode selected, but no locked position (anchor) mode, window is moveable as usual:
+
+* either `Alt+Left mouse button drag` using any place inside of window;
+* or, Window menu (`Alt+Space`, or `Right click` on it on taskbar), then **Move**. I.e., this way it is possible without mouse.
